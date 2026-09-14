@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>과학탐구 데이터 분석기: 장마 기간과 폭염 일수 상관관계</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #2b6cb0;
+            --secondary-color: #e53e3e;
+            --bg-color: #f7fafc;
+            --card-bg: #ffffff;
+        }
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: #2d3748;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        h1 {
+            font-size: 1.5rem;
+            color: #1a202c;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .upload-section {
+            border: 2px dashed #cbd5e0;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            background: #edf2f7;
+            margin-bottom: 20px;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .btn {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 10px 18px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            display: inline-block;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background-color: #2c5282;
+        }
+        .stats-box {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .card {
+            flex: 1;
+            padding: 15px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .card .title {
+            font-size: 0.85rem;
+            color: #718096;
+        }
+        .card .value {
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin-top: 5px;
+            color: #2d3748;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🌧️ 장마 기간 vs 🔥 폭염 일수 상관관계 분석 도구</h1>
+    
+    <div class="upload-section">
+        <p>연도, 장마기간(일), 폭염일수(일)가 포함된 CSV 파일을 선택하세요.</p>
+        <label for="csvFileInput" class="btn">CSV 파일 업로드</label>
+        <input type="file" id="csvFileInput" accept=".csv">
+        <div id="fileName" style="margin-top: 8px; font-size: 0.9rem; color: #4a5568;"></div>
+    </div>
+
+    <div class="stats-box">
+        <div class="card">
+            <div class="title">제외된 결측 데이터</div>
+            <div class="value" id="skippedCount">- 개</div>
+        </div>
+        <div class="card">
+            <div class="title">피어슨 상관계수 (r)</div>
+            <div class="value" id="corrValue">-</div>
+        </div>
+        <div class="card">
+            <div class="title">상관관계 해석</div>
+            <div class="value" id="corrText" style="font-size: 1.05rem;">-</div>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="correlationChart"></canvas>
+    </div>
+</div>
+
+<script>
+    let chartInstance = null;
+
+    document.getElementById('csvFileInput').addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        document.getElementById('fileName').textContent = `선택된 파일: ${file.name}`;
+        
+        const reader = new FileReader();
+        reader.onload = function (event) {
+            parseCSVAndRender(event.target.result);
+        };
+        reader.readAsText(file);
+    });
+
+    function parseCSVAndRender(csvText) {
+        const lines = csvText.trim().split(/\r\n|\n/);
+        if (lines.length < 2) {
+            alert('데이터가 충분하지 않습니다.');
+            return;
+        }
+
+        const years = [];
+        const monsoonDays = [];
+        const heatwaveDays = [];
+        let skippedCount = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(',');
+            if (row.length < 3) continue;
+
+            const year = row[0].trim();
+            const monsoon = parseFloat(row[1].trim());
+            const heatwave = parseFloat(row[2].trim());
+
+            // 결측치 판별 (빈값 또는 NaN 검사)
+            if (!year || isNaN(monsoon) || isNaN(heatwave)) {
+                skippedCount++;
+                continue;
+            }
+
+            years.push(year);
+            monsoonDays.push(monsoon);
+            heatwaveDays.push(heatwave);
+        }
+
+        document.getElementById('skippedCount').textContent = `${skippedCount} 개`;
+
+        if (years.length === 0) {
+            alert('유효한 데이터가 없습니다.');
+            return;
+        }
+
+        const r = calculateCorrelation(monsoonDays, heatwaveDays);
+        document.getElementById('corrValue').textContent = r.toFixed(3);
+        document.getElementById('corrText').textContent = interpretCorrelation(r);
+
+        renderChart(years, monsoonDays, heatwaveDays);
+    }
+
+    function calculateCorrelation(x, y) {
+        const n = x.length;
+        const sumX = x.reduce((a, b) => a + b, 0);
+        const sumY = y.reduce((a, b) => a + b, 0);
+        const sumX2 = x.reduce((a, b) => a + b * b, 0);
+        const sumY2 = y.reduce((a, b) => a + b * b, 0);
+        const sumXY = x.reduce((a, b, idx) => a + b * y[idx], 0);
+
+        const numerator = (n * sumXY) - (sumX * sumY);
+        const denominator = Math.sqrt(((n * sumX2) - (sumX * sumX)) * ((n * sumY2) - (sumY * sumY)));
+
+        if (denominator === 0) return 0;
+        return numerator / denominator;
+    }
+
+    function interpretCorrelation(r) {
+        if (r <= -0.7) return "강한 음(-)의 상관관계";
+        if (r <= -0.3) return "뚜렷한 음(-)의 상관관계";
+        if (r < 0.3) return "상관관계 거의 없음";
+        if (r < 0.7) return "뚜렷한 양(+)의 상관관계";
+        return "강한 양(+)의 상관관계";
+    }
+
+    function renderChart(labels, monsoonData, heatwaveData) {
+        const ctx = document.getElementById('correlationChart').getContext('2d');
+
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: '장마 기간 (일)',
+                        data: monsoonData,
+                        backgroundColor: 'rgba(74, 144, 226, 0.85)',
+                        borderColor: '#3182ce',
+                        borderWidth: 1
+                    },
+                    {
+                        label: '폭염 일수 (일)',
+                        data: heatwaveData,
+                        backgroundColor: 'rgba(255, 107, 107, 0.85)',
+                        borderColor: '#e53e3e',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { title: { display: true, text: '연도' } },
+                    y: { title: { display: true, text: '일수 (일)' }, beginAtZero: true }
+                },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: { mode: 'index', intersect: false }
+                }
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
